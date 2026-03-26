@@ -63,6 +63,8 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
   // Initialize connection status
   connection_status_ = 0.0;
   is_connected_.store(false);
+  executor_running_.store(false);
+  device_sensor_type_ = DeltoTCP::SensorType::NONE;
 
   // Validate joint interfaces
   for (const hardware_interface::ComponentInfo& joint : info_.joints) {
@@ -190,17 +192,40 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
     return CallbackReturn::FAILURE;
   }
 
-  // Create ROS2 node for services
+  // Get sensor type from device (available after Connect)
+  device_sensor_type_ = delto_client_->GetSensorType();
+  RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
+              "Device sensor type: 0x%02X, Finger mask: 0x%02X",
+              static_cast<int>(device_sensor_type_),
+              delto_client_->GetFingerSensorMask());
+
+  // Create ROS2 node for services and publishers
   node_ = rclcpp::Node::make_shared("delto_hardware_interface_node");
 
-  // Create F/T sensor offset service if supported and enabled
-  if (supports_ft_sensor_ && fingertip_sensor_enabled_) {
+  // Create F/T sensor offset service if F/T sensor
+  if (isFTSensor(device_sensor_type_) && fingertip_sensor_enabled_) {
     ft_offset_service_ = node_->create_service<std_srvs::srv::Trigger>(
         "~/set_ft_sensor_offset",
         std::bind(&SystemInterface::ftOffsetCallback, this,
                   std::placeholders::_1, std::placeholders::_2));
     RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
                 "F/T sensor offset service created: ~/set_ft_sensor_offset");
+  }
+
+  // Create tactile image publishers if tactile sensor
+  if ((device_sensor_type_ == DeltoTCP::SensorType::TACTILE_M ||
+       device_sensor_type_ == DeltoTCP::SensorType::TACTILE_S) &&
+      fingertip_sensor_enabled_) {
+    uint8_t mask = delto_client_->GetFingerSensorMask();
+    for (size_t i = 0; i < num_fingers_; i++) {
+      if (mask & (1 << i)) {
+        std::string topic = "tactile/finger_" + std::to_string(i + 1);
+        auto pub = node_->create_publisher<sensor_msgs::msg::Image>(topic, 10);
+        tactile_publishers_.push_back(pub);
+        RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
+                    "Tactile image publisher created: %s", topic.c_str());
+      }
+    }
   }
 
   // Create GPIO services if supported and enabled
@@ -220,6 +245,17 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
     RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
                 "GPIO services created: ~/set_gpio_output1, ~/set_gpio_output2, ~/set_gpio_output3");
   }
+
+  // Start executor thread for service callbacks (NOT in RT thread)
+  executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+  executor_->add_node(node_);
+  executor_running_.store(true);
+  executor_thread_ = std::thread([this]() {
+    while (executor_running_.load()) {
+      executor_->spin_some(std::chrono::milliseconds(10));
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  });
 
   return CallbackReturn::SUCCESS;
 }
@@ -426,7 +462,16 @@ hardware_interface::SystemInterface::CallbackReturn
 SystemInterface::on_deactivate(
     [[maybe_unused]] const rclcpp_lifecycle::State& previous_state) {
   RCLCPP_INFO(rclcpp::get_logger("SystemInterface"), "Deactivating driver...");
-  
+
+  // Stop executor thread
+  executor_running_.store(false);
+  if (executor_thread_.joinable()) {
+    executor_thread_.join();
+  }
+  if (executor_) {
+    executor_->cancel();
+  }
+
   if (delto_client_) {
     delto_client_->Disconnect();
   }
@@ -467,8 +512,9 @@ SystemInterface::export_state_interfaces() {
                  "export_state_interfaces: %s", info_.joints[i].name.c_str());
   }
 
-  // Fingertip F/T sensor interfaces
-  if (supports_ft_sensor_ && fingertip_sensor_enabled_) {
+  // Fingertip F/T sensor interfaces (only for actual F/T sensor, not tactile)
+  if (supports_ft_sensor_ && fingertip_sensor_enabled_ &&
+      isFTSensor(device_sensor_type_)) {
     for (size_t finger = 0; finger < num_fingers_; finger++) {
       std::string sensor_name = getFingerName(finger);
       
@@ -549,13 +595,21 @@ hardware_interface::SystemInterface::CallbackReturn
 SystemInterface::on_shutdown(
     [[maybe_unused]] const rclcpp_lifecycle::State& previous_state) {
   RCLCPP_INFO(rclcpp::get_logger("SystemInterface"), "Shutting down driver...");
-  
+
+  executor_running_.store(false);
+  if (executor_thread_.joinable()) {
+    executor_thread_.join();
+  }
+  if (executor_) {
+    executor_->cancel();
+  }
+
   if (delto_client_) {
     delto_client_->Disconnect();
   }
   is_connected_.store(false);
   connection_status_ = 0.0;
-  
+
   RCLCPP_INFO(rclcpp::get_logger("SystemInterface"), "Driver stopped");
   return CallbackReturn::SUCCESS;
 }
@@ -601,8 +655,9 @@ SystemInterface::return_type SystemInterface::read(
       temperature_ = received_data.temperature;
     }
 
-    // Parse fingertip sensor data
-    if (supports_ft_sensor_ && fingertip_sensor_enabled_ && 
+    // Parse F/T sensor data (only when device has F/T sensor)
+    if (isFTSensor(device_sensor_type_) &&
+        fingertip_sensor_enabled_ &&
         received_data.fingertip_sensor.size() >= num_fingers_ * 6) {
       for (size_t finger = 0; finger < num_fingers_; finger++) {
         size_t base = finger * 6;
@@ -612,6 +667,46 @@ SystemInterface::return_type SystemInterface::read(
         fingertip_torque_x_[finger] = received_data.fingertip_sensor[base + 3];
         fingertip_torque_y_[finger] = received_data.fingertip_sensor[base + 4];
         fingertip_torque_z_[finger] = received_data.fingertip_sensor[base + 5];
+      }
+    }
+
+    // Publish tactile image data
+    if (device_sensor_type_ == DeltoTCP::SensorType::TACTILE_M &&
+        fingertip_sensor_enabled_ &&
+        received_data.tactile_m.size() == tactile_publishers_.size()) {
+      for (size_t i = 0; i < tactile_publishers_.size(); i++) {
+        sensor_msgs::msg::Image img;
+        img.header.stamp = time;
+        img.header.frame_id = hand_type_ + "_fingertip_" + std::to_string(i + 1);
+        img.height = 5;
+        img.width = 3;
+        img.encoding = "mono8";
+        img.is_bigendian = false;
+        img.step = 3;
+        img.data = received_data.tactile_m[i];  // 15 bytes
+        tactile_publishers_[i]->publish(img);
+      }
+    }
+
+    if (device_sensor_type_ == DeltoTCP::SensorType::TACTILE_S &&
+        fingertip_sensor_enabled_ &&
+        received_data.tactile_s.size() == tactile_publishers_.size()) {
+      for (size_t i = 0; i < tactile_publishers_.size(); i++) {
+        sensor_msgs::msg::Image img;
+        img.header.stamp = time;
+        img.header.frame_id = hand_type_ + "_fingertip_" + std::to_string(i + 1);
+        img.height = 6;
+        img.width = 3;
+        img.encoding = "mono16";
+        img.is_bigendian = false;
+        img.step = 6;  // 3 pixels * 2 bytes
+        img.data.resize(36);
+        for (size_t j = 0; j < 18; j++) {
+          // Little-endian for mono16
+          img.data[j * 2]     = received_data.tactile_s[i][j] & 0xFF;
+          img.data[j * 2 + 1] = (received_data.tactile_s[i][j] >> 8) & 0xFF;
+        }
+        tactile_publishers_[i]->publish(img);
       }
     }
 
@@ -625,11 +720,6 @@ SystemInterface::return_type SystemInterface::read(
     // Update connection status
     is_connected_.store(true);
     connection_status_ = 1.0;
-
-    // Spin once to process service callbacks
-    if (node_) {
-      rclcpp::spin_some(node_);
-    }
 
     return return_type::OK;
   } catch (const std::exception& e) {

@@ -32,6 +32,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 #include <array>
 
@@ -43,6 +44,7 @@
 #include "rclcpp_lifecycle/state.hpp"
 #include "std_srvs/srv/trigger.hpp"
 #include "std_srvs/srv/set_bool.hpp"
+#include "sensor_msgs/msg/image.hpp"
 
 #include "delto_tcp_comm/delto_developer_TCP.hpp"
 #include "delto_hardware/delto_gripper_helper.hpp"
@@ -88,6 +90,13 @@ static const int DG5F_RIGHT_MOTOR_DIR[20] = {
     -1, 1, 1, 1, -1, 1, 1, 1,
     -1, -1, -1, -1
 };
+
+// Check if sensor type is any F/T variant
+inline bool isFTSensor(DeltoTCP::SensorType type) {
+  return type == DeltoTCP::SensorType::FT_6AXIS ||
+         type == DeltoTCP::SensorType::FT_3AXIS ||
+         type == DeltoTCP::SensorType::FT_4AXIS;
+}
 
 class SystemInterface : public hardware_interface::SystemInterface {
  public:
@@ -192,12 +201,22 @@ class SystemInterface : public hardware_interface::SystemInterface {
   // Communication client
   std::unique_ptr<DeltoTCP::Communication> delto_client_;
 
-  // ROS2 node for services
+  // Sensor type detected from device
+  DeltoTCP::SensorType device_sensor_type_;
+
+  // ROS2 node for services and publishers
   rclcpp::Node::SharedPtr node_;
+  rclcpp::executors::SingleThreadedExecutor::SharedPtr executor_;
+  std::thread executor_thread_;
+  std::atomic<bool> executor_running_;
+
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr ft_offset_service_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr gpio_output1_service_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr gpio_output2_service_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr gpio_output3_service_;
+
+  // Tactile image publishers (per finger)
+  std::vector<rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> tactile_publishers_;
 };
 
 }  // namespace delto_hardware
