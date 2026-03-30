@@ -14,6 +14,7 @@ find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(delto_tcp_comm REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
 
@@ -39,6 +40,7 @@ ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   rclcpp_lifecycle
   std_srvs
+  sensor_msgs
   delto_tcp_comm
 )
 
@@ -78,6 +80,7 @@ ament_export_dependencies(
   rclcpp
   rclcpp_lifecycle
   std_srvs
+  sensor_msgs
   delto_tcp_comm
 )
 

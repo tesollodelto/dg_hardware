@@ -194,10 +194,6 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
 
   // Get sensor type from device (available after Connect)
   device_sensor_type_ = delto_client_->GetSensorType();
-  RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
-              "Device sensor type: 0x%02X, Finger mask: 0x%02X",
-              static_cast<int>(device_sensor_type_),
-              delto_client_->GetFingerSensorMask());
 
   // Create ROS2 node for services and publishers
   node_ = rclcpp::Node::make_shared("delto_hardware_interface_node");
@@ -216,15 +212,12 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
   if ((device_sensor_type_ == DeltoTCP::SensorType::TACTILE_M ||
        device_sensor_type_ == DeltoTCP::SensorType::TACTILE_S) &&
       fingertip_sensor_enabled_) {
-    uint8_t mask = delto_client_->GetFingerSensorMask();
     for (size_t i = 0; i < num_fingers_; i++) {
-      if (mask & (1 << i)) {
-        std::string topic = "tactile/finger_" + std::to_string(i + 1);
-        auto pub = node_->create_publisher<sensor_msgs::msg::Image>(topic, 10);
-        tactile_publishers_.push_back(pub);
-        RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
-                    "Tactile image publisher created: %s", topic.c_str());
-      }
+      std::string topic = "tactile/finger_" + std::to_string(i + 1);
+      auto pub = node_->create_publisher<sensor_msgs::msg::Image>(topic, 10);
+      tactile_publishers_.push_back(pub);
+      RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
+                  "Tactile image publisher created: %s", topic.c_str());
     }
   }
 
