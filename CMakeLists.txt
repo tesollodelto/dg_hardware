@@ -16,7 +16,6 @@ find_package(rclcpp_lifecycle REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(delto_tcp_comm REQUIRED)
-find_package(Boost REQUIRED COMPONENTS system)
 
 # Import delto_gripper_helper library (shared across all drivers)
 add_library(delto_gripper_helper SHARED IMPORTED)
@@ -46,7 +45,6 @@ ament_target_dependencies(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME}
   delto_gripper_helper
-  Boost::system
 )
 
 # Export hardware plugins
