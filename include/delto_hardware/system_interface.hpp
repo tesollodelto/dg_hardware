@@ -31,6 +31,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -124,7 +125,7 @@ class SystemInterface : public hardware_interface::SystemInterface {
   bool checkFirmwareCompatibility();
   int getMotorDirection(size_t joint_index) const;
   std::string getFingerName(size_t finger_index) const;
-  
+
   // Service callbacks
   void ftOffsetCallback(
       const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
@@ -144,27 +145,27 @@ class SystemInterface : public hardware_interface::SystemInterface {
   int delto_port_;
   uint16_t model_;
   std::string hand_type_;  // "left" or "right" for DG5F
-  
+
   // Model capabilities (determined by model ID)
   bool supports_ft_sensor_;      // DG3F-M, DG4F, DG5F
   bool supports_gpio_;           // All models (DG3F-B, DG3F-M, DG4F, DG5F)
   bool supports_temperature_;    // Future use
   size_t num_fingers_;           // 3, 4, or 5
   size_t num_joints_;            // 12, 18, or 20
-  
+
   // User-enabled features (from parameters)
   bool fingertip_sensor_enabled_;
   bool io_enabled_;
-  
+
   // Firmware version
   std::vector<uint8_t> firmware_version_;
   bool firmware_dir_revised_;  // Motor direction revised in firmware
-  
+
   // Minimum firmware versions for motor direction revision
   // DG3F-B: v3.6+, DG3F-M: v2.8+, DG5F: v2.8+, DG4F: always revised
   int min_firmware_major_;
   int min_firmware_minor_;
-  
+
   // Motor direction array (for models that need it)
   std::vector<int> motor_dir_;
 
@@ -175,7 +176,7 @@ class SystemInterface : public hardware_interface::SystemInterface {
   std::vector<double> temperature_;
   std::vector<double> effort_commands_;
   std::vector<double> current_;
-  
+
   // Current control
   std::vector<int> current_limit_flag_;
   std::vector<double> current_integral_;
@@ -196,10 +197,13 @@ class SystemInterface : public hardware_interface::SystemInterface {
 
   // Connection status
   std::atomic<bool> is_connected_;
+  std::atomic<bool> reconnecting_;  // Background reconnection in progress
+  std::thread reconnect_thread_;
   double connection_status_;
 
   // Communication client
   std::unique_ptr<DeltoTCP::Communication> delto_client_;
+  std::mutex comm_mutex_;  // Protects delto_client_ access from multiple threads
 
   // Sensor type detected from device
   DeltoTCP::SensorType device_sensor_type_;

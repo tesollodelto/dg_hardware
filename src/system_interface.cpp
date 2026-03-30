@@ -63,7 +63,9 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
   // Initialize connection status
   connection_status_ = 0.0;
   is_connected_.store(false);
+  reconnecting_.store(false);
   executor_running_.store(false);
+  firmware_dir_revised_ = false;
   device_sensor_type_ = DeltoTCP::SensorType::NONE;
 
   // Validate joint interfaces
@@ -107,7 +109,9 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
 
   if (info.hardware_parameters.find("delto_model") != info.hardware_parameters.end()) {
     try {
-      model_ = static_cast<uint16_t>(std::stoi(info.hardware_parameters.at("delto_model")));
+      model_ = static_cast<uint16_t>(
+          std::stoi(info.hardware_parameters.at("delto_model"),
+                    nullptr, 0));
     } catch (...) {
       RCLCPP_WARN(rclcpp::get_logger("SystemInterface"),
                   "Invalid model parameter, using default: 0x%X", model_);
@@ -129,8 +133,8 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
   // Initialize model-specific settings
   initModelSpecificSettings();
 
-  RCLCPP_INFO(rclcpp::get_logger("SystemInterface"), 
-              "Delto model: 0x%X, Fingers: %zu, Joints: %zu", 
+  RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
+              "Delto model: 0x%X, Fingers: %zu, Joints: %zu",
               model_, num_fingers_, num_joints_);
   RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
               "Supports F/T: %s, Supports GPIO: %s",
@@ -157,34 +161,33 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
 
   // Create communication client
   delto_client_ = std::make_unique<DeltoTCP::Communication>(
-      delto_ip_, delto_port_, model_, 
-      fingertip_sensor_enabled_ && supports_ft_sensor_, 
+      delto_ip_, delto_port_, model_,
+      fingertip_sensor_enabled_ && supports_ft_sensor_,
       io_enabled_ && supports_gpio_);
 
   // Try to connect
   try {
-    RCLCPP_INFO(rclcpp::get_logger("SystemInterface"), 
+    RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
                 "Attempting to connect to %s:%d", delto_ip_.c_str(), delto_port_);
     delto_client_->Connect();
     firmware_version_ = delto_client_->GetFirmwareVersion();
-    
+
     if (firmware_version_.size() < 2) {
       RCLCPP_WARN(rclcpp::get_logger("SystemInterface"),
                   "Invalid firmware version returned, using default [0, 0]");
       firmware_version_.resize(2, 0);
     }
-    
+
     is_connected_.store(true);
     connection_status_ = 1.0;
-    
+
     // Check firmware compatibility for motor direction
     checkFirmwareCompatibility();
-    
+
     RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
                 "Successfully connected. Firmware: v%d.%d, Motor direction revised: %s",
                 firmware_version_[0], firmware_version_[1],
                 firmware_dir_revised_ ? "yes" : "no");
-                
   } catch (...) {
     RCLCPP_ERROR(rclcpp::get_logger("SystemInterface"), "Connect Failed.");
     is_connected_.store(false);
@@ -236,7 +239,8 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
         std::bind(&SystemInterface::gpioOutput3Callback, this,
                   std::placeholders::_1, std::placeholders::_2));
     RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
-                "GPIO services created: ~/set_gpio_output1, ~/set_gpio_output2, ~/set_gpio_output3");
+                "GPIO services created: ~/set_gpio_output1, "
+                "~/set_gpio_output2, ~/set_gpio_output3");
   }
 
   // Start executor thread for service callbacks (NOT in RT thread)
@@ -403,7 +407,7 @@ bool SystemInterface::checkFirmwareCompatibility() {
 
   // Check if firmware version meets minimum requirement for motor direction revision
   if (firmware_version_[0] > min_firmware_major_ ||
-      (firmware_version_[0] == min_firmware_major_ && 
+      (firmware_version_[0] == min_firmware_major_ &&
        firmware_version_[1] >= min_firmware_minor_)) {
     firmware_dir_revised_ = true;
   } else {
@@ -420,12 +424,12 @@ int SystemInterface::getMotorDirection(size_t joint_index) const {
   if (joint_index >= motor_dir_.size()) {
     return 1;
   }
-  
+
   // If firmware is revised, motor direction is always 1
   if (firmware_dir_revised_) {
     return 1;
   }
-  
+
   // Otherwise use the model-specific motor direction
   return motor_dir_[joint_index];
 }
@@ -478,7 +482,7 @@ SystemInterface::on_deactivate(
 std::vector<hardware_interface::StateInterface>
 SystemInterface::export_state_interfaces() {
   std::vector<hardware_interface::StateInterface> state_interfaces;
-  
+
   // Reserve space for all interfaces
   size_t reserve_size = info_.joints.size() * 4;  // position, velocity, effort, temperature
   if (supports_ft_sensor_ && fingertip_sensor_enabled_) {
@@ -510,7 +514,7 @@ SystemInterface::export_state_interfaces() {
       isFTSensor(device_sensor_type_)) {
     for (size_t finger = 0; finger < num_fingers_; finger++) {
       std::string sensor_name = getFingerName(finger);
-      
+
       state_interfaces.emplace_back(hardware_interface::StateInterface(
           sensor_name, "force.x", &fingertip_force_x_[finger]));
       state_interfaces.emplace_back(hardware_interface::StateInterface(
@@ -539,7 +543,7 @@ SystemInterface::export_state_interfaces() {
         "gpio", "output_3", &gpio_states_[2]));
     state_interfaces.emplace_back(hardware_interface::StateInterface(
         "gpio", "input_1", &gpio_states_[3]));
-    
+
     RCLCPP_DEBUG(rclcpp::get_logger("SystemInterface"),
                  "export_state_interfaces: gpio (4 channels)");
   }
@@ -578,7 +582,7 @@ SystemInterface::CallbackReturn SystemInterface::on_activate(
     RCLCPP_INFO(rclcpp::get_logger("SystemInterface"), "Driver activated successfully!");
     return CallbackReturn::SUCCESS;
   } else {
-    RCLCPP_ERROR(rclcpp::get_logger("SystemInterface"), 
+    RCLCPP_ERROR(rclcpp::get_logger("SystemInterface"),
                  "Device not connected, cannot activate");
     return CallbackReturn::ERROR;
   }
@@ -618,19 +622,55 @@ SystemInterface::return_type SystemInterface::read(
       return return_type::ERROR;
     }
 
+    // If disconnected, return OK with stale data while background reconnects
     if (!is_connected_.load()) {
-      return return_type::ERROR;
+      if (!reconnecting_.load()) {
+        reconnecting_.store(true);
+        // Detach previous thread if any
+        if (reconnect_thread_.joinable()) {
+          reconnect_thread_.detach();
+        }
+        reconnect_thread_ = std::thread([this]() {
+          constexpr int MAX_RETRIES = 10;
+          constexpr int RETRY_DELAY_MS = 1000;
+          for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(RETRY_DELAY_MS));
+            try {
+              RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
+                          "Reconnection attempt %d/%d...", attempt, MAX_RETRIES);
+              std::lock_guard<std::mutex> lock(comm_mutex_);
+              delto_client_->Disconnect();
+              delto_client_->Connect();
+              is_connected_.store(true);
+              connection_status_ = 1.0;
+              reconnecting_.store(false);
+              RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
+                          "Reconnected successfully on attempt %d", attempt);
+              return;
+            } catch (const std::exception& e) {
+              RCLCPP_WARN(rclcpp::get_logger("SystemInterface"),
+                          "Reconnection attempt %d failed: %s", attempt, e.what());
+            }
+          }
+          RCLCPP_ERROR(rclcpp::get_logger("SystemInterface"),
+                       "All reconnection attempts failed");
+          reconnecting_.store(false);
+        });
+      }
+      return return_type::OK;  // Return stale data, don't block RT loop
     }
 
     DeltoTCP::DeltoReceivedData received_data;
     try {
+      std::lock_guard<std::mutex> lock(comm_mutex_);
       received_data = delto_client_->GetData();
     } catch (const std::exception& e) {
-      RCLCPP_ERROR(rclcpp::get_logger("SystemInterface"), 
-                   "Failed to read data: %s", e.what());
+      RCLCPP_WARN(rclcpp::get_logger("SystemInterface"),
+                  "Read failed: %s. Starting background reconnection...", e.what());
       is_connected_.store(false);
       connection_status_ = 0.0;
-      return return_type::ERROR;
+      return return_type::OK;  // Return stale data, reconnect on next cycle
     }
 
     // Validate and copy joint data
@@ -716,11 +756,11 @@ SystemInterface::return_type SystemInterface::read(
 
     return return_type::OK;
   } catch (const std::exception& e) {
-    RCLCPP_ERROR(rclcpp::get_logger("SystemInterface"), 
+    RCLCPP_ERROR(rclcpp::get_logger("SystemInterface"),
                  "Unexpected error in read: %s", e.what());
     is_connected_.store(false);
     connection_status_ = 0.0;
-    return return_type::ERROR;
+    return return_type::OK;  // Don't deactivate, let reconnection handle it
   }
 }
 
@@ -728,7 +768,7 @@ SystemInterface::return_type SystemInterface::write(
     [[maybe_unused]] const rclcpp::Time& time,
     [[maybe_unused]] const rclcpp::Duration& period) {
   if (!is_connected_.load()) {
-    return return_type::ERROR;
+    return return_type::OK;  // Skip write while reconnecting
   }
 
   std::vector<double> filter_effort_commands(effort_commands_.size());
@@ -751,22 +791,24 @@ SystemInterface::return_type SystemInterface::write(
     for (size_t i = 0; i < effort_commands_.size(); ++i) {
       int_duty[i] = static_cast<int>(duty[i] * 10);
       int_duty[i] = std::clamp(int_duty[i], -1000, 1000);
-      
+
       // Apply motor direction based on firmware version
       int_duty[i] *= getMotorDirection(i);
     }
 
-    delto_client_->SendDuty(int_duty);
-    
+    {
+      std::lock_guard<std::mutex> lock(comm_mutex_);
+      delto_client_->SendDuty(int_duty);
+    }
+
     is_connected_.store(true);
     connection_status_ = 1.0;
-
   } catch (const std::exception& e) {
-    RCLCPP_ERROR(rclcpp::get_logger("SystemInterface"), 
-                 "Write error: %s", e.what());
+    RCLCPP_WARN(rclcpp::get_logger("SystemInterface"),
+                "Write error: %s", e.what());
     is_connected_.store(false);
     connection_status_ = 0.0;
-    return return_type::ERROR;
+    return return_type::OK;  // Don't deactivate hardware, let read() handle reconnection
   }
 
   return return_type::OK;
@@ -777,6 +819,7 @@ void SystemInterface::ftOffsetCallback(
     std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
   try {
     if (delto_client_ && supports_ft_sensor_ && fingertip_sensor_enabled_) {
+      std::lock_guard<std::mutex> lock(comm_mutex_);
       delto_client_->SetFTSensorOffset();
       response->success = true;
       response->message = "F/T sensor offset calibration completed successfully.";
@@ -805,6 +848,7 @@ void SystemInterface::gpioOutput1Callback(
     std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
   try {
     if (delto_client_ && supports_gpio_ && io_enabled_) {
+      std::lock_guard<std::mutex> lock(comm_mutex_);
       gpio_output1_state_ = request->data;
       delto_client_->SetGPIO(gpio_output1_state_, gpio_output2_state_, gpio_output3_state_);
       response->success = true;
@@ -827,6 +871,7 @@ void SystemInterface::gpioOutput2Callback(
     std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
   try {
     if (delto_client_ && supports_gpio_ && io_enabled_) {
+      std::lock_guard<std::mutex> lock(comm_mutex_);
       gpio_output2_state_ = request->data;
       delto_client_->SetGPIO(gpio_output1_state_, gpio_output2_state_, gpio_output3_state_);
       response->success = true;
@@ -849,6 +894,7 @@ void SystemInterface::gpioOutput3Callback(
     std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
   try {
     if (delto_client_ && supports_gpio_ && io_enabled_) {
+      std::lock_guard<std::mutex> lock(comm_mutex_);
       gpio_output3_state_ = request->data;
       delto_client_->SetGPIO(gpio_output1_state_, gpio_output2_state_, gpio_output3_state_);
       response->success = true;
