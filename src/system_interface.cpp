@@ -189,7 +189,9 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
                 firmware_version_[0], firmware_version_[1],
                 firmware_dir_revised_ ? "yes" : "no");
   } catch (...) {
-    RCLCPP_ERROR(rclcpp::get_logger("SystemInterface"), "Connect Failed.");
+    RCLCPP_ERROR(rclcpp::get_logger("SystemInterface"),
+                 "Connect Failed to %s:%d. Check that the gripper is powered on and the IP is reachable.",
+                 delto_ip_.c_str(), delto_port_);
     is_connected_.store(false);
     connection_status_ = 0.0;
     return CallbackReturn::FAILURE;
