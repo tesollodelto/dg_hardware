@@ -73,11 +73,16 @@ ros2 service call /dg5f_right/delto_hardware_interface_node/set_ft_sensor_offset
 **Example:**
 ```bash
 # Motor ON
-ros2 service call /dg5f_left/set_gpio_output1 std_srvs/srv/SetBool "{data: true}"
+ros2 service call /dg5f_left/delto_hardware_interface_node/set_gpio_output1 std_srvs/srv/SetBool "{data: true}"
 
 # Grasp
-ros2 service call /dg5f_left/set_gpio_output2 std_srvs/srv/SetBool "{data: true}"
+ros2 service call /dg5f_left/delto_hardware_interface_node/set_gpio_output2 std_srvs/srv/SetBool "{data: true}"
 ```
+
+> **Tip:** Service names depend on the driver namespace. To find exact names at runtime:
+> ```bash
+> ros2 service list | grep <namespace>  # e.g., ros2 service list | grep dg5f_right
+> ```
 
 ## 📦 Installation
 
