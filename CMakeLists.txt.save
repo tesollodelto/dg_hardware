@@ -7,7 +7,7 @@ endif()
 
 set(CMAKE_CXX_STANDARD 17)
 
-# 1. 하부 종속성 패키지들 검색
+# find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
@@ -17,7 +17,7 @@ find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(delto_tcp_comm REQUIRED)
 
-# 2. 아키텍처별 테솔로 그리퍼 헬퍼 라이브러리 선택
+# Select architecture-specific library
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
   set(DELTO_HELPER_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/aarch64)
   set(DELTO_HELPER_LIB_NAME libdelto_gripper_helper_arm64.so)
@@ -28,13 +28,13 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
-# 3. 외부 공유 라이브러리 임포트
+# Import delto_gripper_helper library (shared across all drivers)
 add_library(delto_gripper_helper SHARED IMPORTED)
 set_target_properties(delto_gripper_helper PROPERTIES
   IMPORTED_LOCATION ${DELTO_HELPER_LIB_DIR}/${DELTO_HELPER_LIB_NAME}
 )
 
-# 4. 하드웨어 인터페이스 라이브러리 타겟 생성
+# Build the hardware interface library
 add_library(${PROJECT_NAME} SHARED
   src/system_interface.cpp
 )
@@ -42,25 +42,26 @@ add_library(${PROJECT_NAME} SHARED
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
-  ${delto_tcp_comm_INCLUDE_DIRS}
 )
 
-# 🔥 [핵심 수정] 꼬이는 ament 매크로 대신, 순정 CMake로 다이렉트 의존성 주입!
+ament_target_dependencies(${PROJECT_NAME}
+  hardware_interface
+  pluginlib
+  rclcpp
+  rclcpp_lifecycle
+  std_srvs
+  sensor_msgs
+  delto_tcp_comm
+)
+
 target_link_libraries(${PROJECT_NAME}
-  hardware_interface::hardware_interface
-  pluginlib::pluginlib
-  rclcpp::rclcpp
-  rclcpp_lifecycle::rclcpp_lifecycle
-  std_srvs::std_srvs
-  sensor_msgs::sensor_msgs
-  delto_tcp_comm::delto_tcp_comm
   delto_gripper_helper
 )
 
-# 5. ROS 2 하드웨어 플러그인 엑스포트
+# Export hardware plugins
 pluginlib_export_plugin_description_file(hardware_interface delto_hardware.xml)
 
-# 6. 인스톨 설정
+# Install
 install(
   TARGETS ${PROJECT_NAME}
   EXPORT export_${PROJECT_NAME}
@@ -79,12 +80,9 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
-# 7. ROS 2 빌드 시스템 환경에 내보내기 설정
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
 ament_export_targets(export_${PROJECT_NAME})
-
-# 의존성 내보내기도 순정 타겟 형태로 안전하게 명시
 ament_export_dependencies(
   hardware_interface
   pluginlib

@@ -104,7 +104,8 @@ class SystemInterface : public hardware_interface::SystemInterface {
   using return_type = hardware_interface::return_type;
   using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
-  CallbackReturn on_init(const hardware_interface::HardwareInfo& info) override;
+
+  CallbackReturn on_init(const hardware_interface::HardwareComponentInterfaceParams& params) override;
   CallbackReturn on_activate(const rclcpp_lifecycle::State& previous_state) override;
   CallbackReturn on_deactivate(const rclcpp_lifecycle::State& previous_state) override;
   CallbackReturn on_shutdown(const rclcpp_lifecycle::State& previous_state) override;
