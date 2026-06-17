@@ -44,14 +44,11 @@ namespace delto_hardware {
   hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
     const hardware_interface::HardwareComponentInterfaceParams& params) {
 
-  // 1. 최신 Lyrical 규격에 맞게 부모 클래스(SystemInterface) 초기화 호출
   if (hardware_interface::SystemInterface::CallbackReturn::SUCCESS !=
       hardware_interface::SystemInterface::on_init(params)) {
     return CallbackReturn::ERROR;
   }
 
-  // 2. 하부 테솔로 기존 코드들이 info 구조체를 참조할 수 있도록 로컬 참조 변수 생성
-  // Lyrical에서는 params 구조체 안에 info가 멤버 변수로 내장되어 있습니다!
   const hardware_interface::HardwareInfo& info = params.hardware_info;
 
   // Initialize arrays based on joint count
