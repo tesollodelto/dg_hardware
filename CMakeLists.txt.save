@@ -42,25 +42,26 @@ add_library(${PROJECT_NAME} SHARED
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
-  ${delto_tcp_comm_INCLUDE_DIRS}
 )
 
-# Link dependent package namespaces directly (ROS 2 Lyrical Compatibility)
+ament_target_dependencies(${PROJECT_NAME}
+  hardware_interface
+  pluginlib
+  rclcpp
+  rclcpp_lifecycle
+  std_srvs
+  sensor_msgs
+  delto_tcp_comm
+)
+
 target_link_libraries(${PROJECT_NAME}
-  hardware_interface::hardware_interface
-  pluginlib::pluginlib
-  rclcpp::rclcpp
-  rclcpp_lifecycle::rclcpp_lifecycle
-  std_srvs::std_srvs
-  sensor_msgs::sensor_msgs
-  delto_tcp_comm::delto_tcp_comm
   delto_gripper_helper
 )
 
 # Export hardware plugins
 pluginlib_export_plugin_description_file(hardware_interface delto_hardware.xml)
 
-# install
+# Install
 install(
   TARGETS ${PROJECT_NAME}
   EXPORT export_${PROJECT_NAME}

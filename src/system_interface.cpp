@@ -41,12 +41,15 @@
 
 namespace delto_hardware {
 
-hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
-    const hardware_interface::HardwareInfo& info) {
+  hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
+    const hardware_interface::HardwareComponentInterfaceParams& params) {
+
   if (hardware_interface::SystemInterface::CallbackReturn::SUCCESS !=
-      hardware_interface::SystemInterface::on_init(info)) {
+      hardware_interface::SystemInterface::on_init(params)) {
     return CallbackReturn::ERROR;
   }
+
+  const hardware_interface::HardwareInfo& info = params.hardware_info;
 
   // Initialize arrays based on joint count
   positions_.resize(info_.joints.size(), 0.0);
