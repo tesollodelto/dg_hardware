@@ -53,6 +53,8 @@
 namespace delto_hardware {
 
 // Model IDs
+constexpr uint16_t MODEL_DG1F_M    = 0x1F02;
+constexpr uint16_t MODEL_DG2F_M    = 0x2F02;
 constexpr uint16_t MODEL_DG3F_B    = 0x3F01;
 constexpr uint16_t MODEL_DG3F_M    = 0x3F02;
 constexpr uint16_t MODEL_DG4F      = 0x4F02;

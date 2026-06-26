@@ -261,6 +261,32 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
 
 void SystemInterface::initModelSpecificSettings() {
   switch (model_) {
+    case MODEL_DG1F_M:
+      num_fingers_ = 1;
+      num_joints_ = 3;
+      supports_ft_sensor_ = false;
+      supports_gpio_ = true;
+      min_firmware_major_ = 2;
+      min_firmware_minor_ = 8;
+      // DG1F-M (M series): motor direction is -1 before firmware v2.8
+      for (size_t i = 0; i < motor_dir_.size(); ++i) {
+        motor_dir_[i] = -1;
+      }
+      break;
+
+    case MODEL_DG2F_M:
+      num_fingers_ = 2;
+      num_joints_ = 6;
+      supports_ft_sensor_ = false;
+      supports_gpio_ = true;
+      min_firmware_major_ = 2;
+      min_firmware_minor_ = 8;
+      // DG2F-M (M series): motor direction is -1 before firmware v2.8
+      for (size_t i = 0; i < motor_dir_.size(); ++i) {
+        motor_dir_[i] = -1;
+      }
+      break;
+
     case MODEL_DG3F_B:
       num_fingers_ = 3;
       num_joints_ = 12;
