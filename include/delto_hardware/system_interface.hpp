@@ -30,6 +30,7 @@
 #define DELTO_HARDWARE__SYSTEM_INTERFACE_HPP_
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -46,6 +47,17 @@
 #include "std_srvs/srv/trigger.hpp"
 #include "std_srvs/srv/set_bool.hpp"
 #include "sensor_msgs/msg/image.hpp"
+
+// ros2_control 4.x deprecated on_init(const HardwareInfo&) in favour of
+// on_init(const HardwareComponentInterfaceParams&). Humble only has the former.
+// Detect by header presence rather than a version number so this keeps working
+// on both without a -Wdeprecated-declarations warning on either.
+#if defined(__has_include)
+#  if __has_include("hardware_interface/types/hardware_component_interface_params.hpp")
+#    include "hardware_interface/types/hardware_component_interface_params.hpp"
+#    define DELTO_HW_COMPONENT_PARAMS_ON_INIT 1
+#  endif
+#endif
 
 #include "delto_tcp_comm/delto_developer_TCP.hpp"
 #include "delto_hardware/delto_gripper_helper.hpp"
@@ -106,7 +118,14 @@ class SystemInterface : public hardware_interface::SystemInterface {
   using return_type = hardware_interface::return_type;
   using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
+  ~SystemInterface() override;
+
+#ifdef DELTO_HW_COMPONENT_PARAMS_ON_INIT
+  CallbackReturn on_init(
+      const hardware_interface::HardwareComponentInterfaceParams& params) override;
+#else
   CallbackReturn on_init(const hardware_interface::HardwareInfo& info) override;
+#endif
   CallbackReturn on_activate(const rclcpp_lifecycle::State& previous_state) override;
   CallbackReturn on_deactivate(const rclcpp_lifecycle::State& previous_state) override;
   CallbackReturn on_shutdown(const rclcpp_lifecycle::State& previous_state) override;
@@ -123,10 +142,17 @@ class SystemInterface : public hardware_interface::SystemInterface {
 
  private:
   // Helper methods
+  // Shared body of both on_init overloads; reads the already-populated info_.
+  CallbackReturn initHardware();
   void initModelSpecificSettings();
   bool checkFirmwareCompatibility();
   int getMotorDirection(size_t joint_index) const;
   std::string getFingerName(size_t finger_index) const;
+  // Must be called before the client or `this` is destroyed.
+  void stopReconnectThread();
+  // Caller must hold comm_mutex_.
+  bool sendZeroDutyLocked();
+  void resetCurrentControlState();
 
   // Service callbacks
   void ftOffsetCallback(
@@ -200,8 +226,19 @@ class SystemInterface : public hardware_interface::SystemInterface {
   // Connection status
   std::atomic<bool> is_connected_;
   std::atomic<bool> reconnecting_;  // Background reconnection in progress
+  std::atomic<bool> reconnect_running_;  // Reconnect thread should keep going
   std::thread reconnect_thread_;
+  // Hand deliberately de-energized; write() refuses to send duty while set.
+  std::atomic<bool> torque_released_;
+  uint64_t stale_read_cycles_;
+  // Exported as a raw double*, so it cannot be std::atomic.
   double connection_status_;
+
+  // Preallocated write() buffers, sized in on_init so update() never allocates.
+  std::vector<double> filter_effort_commands_;
+  std::vector<double> duty_;
+  std::vector<int> int_duty_;
+  std::vector<int> current_mA_;
 
   // Communication client
   std::unique_ptr<DeltoTCP::Communication> delto_client_;
