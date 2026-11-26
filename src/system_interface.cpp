@@ -980,6 +980,21 @@ SystemInterface::return_type SystemInterface::write(
           current_limit_flag_, current_integral_);
     }
 
+    // The limiter only sees |current|:
+    // keep its correction within [0, |command|] so the filtered effort stays
+    // between zero and the command. Without this the integrator (clamped only
+    // at +/-30 inside the helper) can exceed the command and drive the joint
+    // the opposite way at full duty, which keeps the current high and latches.
+    
+    for (size_t i = 0; i < effort_commands_.size(); ++i) {
+      const double cmd = effort_commands_[i];
+      current_integral_[i] =
+          std::clamp(current_integral_[i], 0.0, std::abs(cmd));
+      if (filter_effort_commands_[i] * cmd < 0.0) {
+        filter_effort_commands_[i] = 0.0;
+      }
+    }
+
     duty_ = delto_gripper_helper::ConvertDuty(
         effort_commands_.size(), filter_effort_commands_);
 
