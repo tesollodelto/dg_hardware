@@ -1,6 +1,15 @@
 // delto_gripper_helper
 //
 // Release Notes:
+//   0.4 - Run the limiter PI every cycle so the integral unwinds instead of
+//         hard-resetting (removes the limit cycle at the threshold); cap
+//         compensation at target magnitude minus a stall-torque floor
+//         (replaces the MAX_TORQUE cap that stranded saturated-duty targets
+//         above the limit, and stops post-overshoot current collapse); P term
+//         acts on positive excess only; raise gains to 1/30000
+//   0.3 - Fix S model error using non-S current limit; clamp compensation so
+//         torque is only reduced in magnitude, never reversed; name gain
+//         constants
 //   0.2 - Add S model current limit and current control function
 //   0.1 - Initial release
 
